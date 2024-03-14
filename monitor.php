@@ -8,6 +8,7 @@ require_once('./config.local.php');
 
 global $CSCARTconfig;
 $CSCARTconfig = $config;
+unset($config);
 
 function checkLogin() {
     $userHash = '$2y$10$LXOViHro7RubjAH5.YGUHueZnyIym8m98pblC3ZUAPtwdn0hH4OHO'; // Замените эту строку на реальный хеш вашего пароля
@@ -49,9 +50,9 @@ function headerHtml($pageTitle) {
 
 function homePage() {    
     global $CSCARTconfig;
-	echo '<h1 class="w-100 text-center">Оставь надежду всяк сюда входящий<span style="cursot: pointer;" data-bs-toggle="tooltip" data-bs-placement="top" ' .
+	echo '<h1 class="w-100 text-center">Оставь надежду всяк сюда входящий<span style="cursor: pointer;" class="text-primary" data-bs-toggle="tooltip" data-bs-placement="top" ' .
 	'title="Оста́вь наде́жду, вся́к сюда́ входя́щий (итал. Lasciate ogne speranza, voi ch\'entrate) — заключительная фраза текста над вратами ада в «Божественной комедии» Данте Алигьери. ' . 
-	'Врата ада «Божественной комедии» на иллюстрации У. Блейка (1824—1827">!</span></h1>';
+	'Врата ада «Божественной комедии» на иллюстрации У. Блейка (1824—1827)">!</span></h1>';
 	if (checkLogin() && !empty($CSCARTconfig) && isset($CSCARTconfig['db_host'])) {
 		echo '<h4 class="text-success">Конфигурация CSCART подключена</h4>';
 		
@@ -67,9 +68,9 @@ function navigationMenu() {
     echo '</button>';
     echo '<div class="collapse navbar-collapse" id="navbarNav">';
     echo '<ul class="navbar-nav">';
-    echo '<li class="nav-item"><a class="nav-link active" aria-current="page" href="?page=home">Главная</a></li>';
-    echo '<li class="nav-item"><a class="nav-link" href="?page=serverLoad">Нагрузка</a></li>';
-    echo '<li class="nav-item"><a class="nav-link" href="?page=cron">CRON менеджер</a></li>';
+    echo '<li class="nav-item"><a class="nav-link" data-page="home" href="?page=home">Главная</a></li>';
+    echo '<li class="nav-item"><a class="nav-link" data-page="serverLoad" href="?page=serverLoad">Нагрузка</a></li>';
+    echo '<li class="nav-item"><a class="nav-link" data-page="cron" href="?page=cron">CRON менеджер</a></li>';
     echo '</ul>';
     echo '</div>';
     echo '</div>';
@@ -95,6 +96,7 @@ function serverLoadPage() {
     displayTopCpuProcesses();
     displayApacheStatus();
 	displayNginxStatus();
+	displayMySQLQueue();
     echo '</div>'; // Закрытие аккордиона
 }
 
@@ -159,7 +161,7 @@ function displayApacheStatus() {
 		$result = shell_exec($command);	
         echo '<p>Информация о процессах Apache не доступна.</p>';
 		if (trim($result) === '') {
-			echo 'APACHE не запущен в системе!';
+			echo 'APACHE не запущен в системе.';
 		} else {
 			echo 'Нагрузка слишком мала для вывода.<br/>';
 			$command = "ps -eo %cpu,cmd | grep 'apache2\|httpd'";
@@ -209,6 +211,67 @@ function displayNginxStatus() {
     echo '</div>';
 }
 
+function displayMySQLQueue() {
+    global $CSCARTconfig;
+	$mysqli = new mysqli($CSCARTconfig['db_host'], $CSCARTconfig['db_user'], $CSCARTconfig['db_password'], $CSCARTconfig['db_name']);
+	if ($mysqli->connect_error) {
+		die("Ошибка подключения: " . $mysqli->connect_error);
+	}		
+	echo '<div class="accordion-item">';
+    echo '<h2 class="accordion-header" id="headingMySQL">';
+    echo '<button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseMySQL" aria-expanded="false" aria-controls="collapseMySQL">';
+    echo 'Топ 10 активных запросов MySQL';
+    echo '</button>';
+    echo '</h2>';
+    echo '<div id="collapseMySQL" class="accordion-collapse collapse" aria-labelledby="headingMySQL" data-bs-parent="#loadAccordion">';
+    echo '<div class="accordion-body">';
+    $query = "SHOW PROCESSLIST";
+    $result = $mysqli->query($query);
+    if ($result && $result->num_rows > 0) {
+        echo '<table class="table">';
+        echo '<thead><tr><th>Id</th><th>User</th><th>DB</th><th>Command</th><th>Time</th><th>State</th><th>Info</th></tr></thead>';
+        echo '<tbody>';
+        $count = 0;
+        while ($row = $result->fetch_assoc() and $count < 10) {
+            echo "<tr><td>{$row['Id']}</td><td>{$row['User']}</td><td>{$row['db']}</td><td>{$row['Command']}</td><td>{$row['Time']}</td><td>{$row['State']}</td><td>{$row['Info']}</td></tr>";
+            $count++;
+        }
+        echo '</tbody></table>';
+    } else {
+        echo '<p>Информация о запросах MySQL не доступна или нет активных запросов.</p>';
+    }
+    echo '<hr/><h4>Заблокированные запросы</h4>';
+    $query = "SHOW OPEN TABLES WHERE In_use > 0;";
+    if ($result = $mysqli->query($query)) {
+        while ($row = $result->fetch_assoc()) {
+            echo "Таблица {$row['Database']}.{$row['Table']} заблокирована<br>";
+        }
+        $result->free();
+    }
+    echo '<hr/><h4>Размер таблиц и индексов</h4>';
+    $query = 'SELECT TABLE_NAME, TABLE_ROWS, DATA_LENGTH, INDEX_LENGTH 
+              FROM information_schema.TABLES 
+              WHERE TABLE_SCHEMA = "' . $CSCARTconfig['db_name'] .'" ORDER BY (DATA_LENGTH + INDEX_LENGTH) DESC;';
+    if ($result = $mysqli->query($query)) {
+        echo '<table border="1"><thead><tr><th>Таблица</th><th>Кол-во строк</th><th>Размер данных</th><th>Размер индексов</th></tr></thead><tbody>';
+        while ($row = $result->fetch_assoc()) {
+            echo "<tr><td>{$row['TABLE_NAME']}</td><td>{$row['TABLE_ROWS']}</td><td>".formatBytes($row['DATA_LENGTH'])."</td><td>".formatBytes($row['INDEX_LENGTH'])."</td></tr>";
+        }
+        echo '</tbody></table>';
+        $result->free();
+    } else {
+        echo 'Не удалось получить информацию о таблицах.';
+    }	
+	$mysqli->close();
+    echo '</div>';
+    echo '</div>';
+    echo '</div>';
+}
+
+function cronManager() {
+	
+}
+
 function footerHtml() {
     echo '</div>'; // Закрытие .container
     echo '<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.0/dist/js/bootstrap.bundle.min.js"></script>';
@@ -217,7 +280,7 @@ function footerHtml() {
     echo '</html>';
 }
 
-function main() {
+function mainScript() {
     $page = $_GET['page'] ?? 'home'; // Получаем параметр page из URL
     if (!isset($_SESSION['loggedin']) || $_SESSION['loggedin'] !== true) $page = 'home';
 	headerHtml("Менеджер сайта");
@@ -228,7 +291,9 @@ function main() {
         case 'serverLoad':
             serverLoadPage();
             break;
-        // Добавьте дополнительные case для новых страниц
+		case 'cronManager':
+            serverLoadPage();
+            break;
         default:
             homePage();
     }
@@ -236,12 +301,31 @@ function main() {
     footerHtml();
 }
 
-main();
+function formatBytes($bytes, $precision = 2) {
+    $units = array('B', 'KB', 'MB', 'GB', 'TB');
+    $bytes = max($bytes, 0);
+    $pow = floor(($bytes ? log($bytes) : 0) / log(1024));
+    $pow = min($pow, count($units) - 1);
+    $bytes /= pow(1024, $pow);
+    return round($bytes, $precision) . ' ' . $units[$pow];
+}
+
+// Инициализация всего добра
+mainScript();
 ?>
 
 <script>
-var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
+var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
 var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
-  return new bootstrap.Tooltip(tooltipTriggerEl)
-})
+	return new bootstrap.Tooltip(tooltipTriggerEl);
+});
+$( document ).ready(function() {
+	const params = new URLSearchParams(window.location.search);
+	const page = params.get('page');
+	if (!page || page == 'home') {
+		$('[data-page="home"]').addClass('active fw-bold');
+	} else {
+		$('[data-page="' + page + '"]').addClass('active fw-bold');
+	}	
+});
 </script>
